@@ -1,0 +1,6 @@
+{
+  "name": "Sandhani Donors",
+  "description": "A donor tracker and next donation scheduler application for Sandhani blood safety management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

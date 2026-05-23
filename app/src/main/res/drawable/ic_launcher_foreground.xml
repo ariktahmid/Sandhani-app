@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 1. Outer Red Brand Ellipse Fill & Stroke -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#E53935"
+        android:strokeWidth="4.5"
+        android:pathData="M 54,18 C 71.67,18 86,34.12 86,54 C 86,73.88 71.67,90 54,90 C 36.33,90 22,73.88 22,54 C 22,34.12 36.33,18 54,18 Z" />
+
+    <!-- 2. Concentric Inner Blue Accent Ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1A237E"
+        android:strokeWidth="1.2"
+        android:pathData="M 54,23 C 68.67,23 80,36.5 80,54 C 80,71.5 68.67,85 54,85 C 39.33,85 28,71.5 28,54 C 28,36.5 39.33,23 54,23 Z" />
+
+    <!-- 3. Stylized Sacred Red Service Flame at the top -->
+    <path
+        android:fillColor="#E53935"
+        android:pathData="M 54,25 C 51,31 49,34 49,38 C 49,41 51.2,43.5 54,43.5 C 56.8,43.5 59,41 59,38 C 59,34 57,31 54,25 Z" />
+
+    <!-- 4. "Sandhani" Wordmark Base Matra & Stylized Bengali Geometry -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M 36,47 h 32 v 2.5 H 36 Z" />
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M 41,49.5 v 6.5 c 0,2.5 4,2.5 4,0 v -6.5 H 41 Z M 51,49.5 V 57 h 4 v -7.5 H 51 Z M 63,49.5 v 6.5 c 0,2.5 4,2.5 4,0 v -6.5 H 63 Z" />
+
+    <!-- 5. Blue Covenant Cradle / Crescent at the bottom -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M 35,63 C 40,75 68,75 73,63 C 65,80 43,80 35,63 Z" />
+
+    <!-- 6. Bold Medical Red Cross Centerpiece -->
+    <path
+        android:fillColor="#E53935"
+        android:pathData="M 52,65 h 4 v 3 h 3 v 4 h -3 v 3 h -4 v -3 h -3 v -4 h 3 Z" />
+
+</vector>
