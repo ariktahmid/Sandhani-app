@@ -10,11 +10,17 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface DonorDao {
-    @Query("SELECT * FROM donors ORDER BY name ASC")
+    @Query("SELECT * FROM donors WHERE isDeleted = 0 ORDER BY name ASC")
     fun getAllDonors(): Flow<List<Donor>>
+
+    @Query("SELECT * FROM donors")
+    suspend fun getAllDonorsSync(): List<Donor>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDonor(donor: Donor): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDonors(donors: List<Donor>)
 
     @Update
     suspend fun updateDonor(donor: Donor)

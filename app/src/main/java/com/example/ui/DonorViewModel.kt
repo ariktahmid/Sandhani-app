@@ -21,9 +21,21 @@ import java.util.Locale
 class DonorViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: DonorRepository
 
+    // Sync status states
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing = _isSyncing.asStateFlow()
+
+    private val _syncSuccess = MutableStateFlow<Boolean?>(null)
+    val syncSuccess = _syncSuccess.asStateFlow()
+
+    private val _lastSyncedMillis = MutableStateFlow<Long>(0L)
+    val lastSyncedMillis = _lastSyncedMillis.asStateFlow()
+
     init {
         val db = AppDatabase.getDatabase(application)
         repository = DonorRepository(db.donorDao)
+        // Perform an automatic cloud synchronization on app startup
+        performSync()
     }
 
     // Search query state
@@ -106,9 +118,16 @@ class DonorViewModel(application: Application) : AndroidViewModel(application) {
         bloodGroup: String,
         lastDonationDateMillis: Long,
         phone: String,
-        notes: String
+        notes: String,
+        existingUuid: String? = null
     ) {
         viewModelScope.launch {
+            val finalUuid = if (id != 0) {
+                existingUuid ?: repository.getDonorById(id)?.uuid ?: java.util.UUID.randomUUID().toString()
+            } else {
+                java.util.UUID.randomUUID().toString()
+            }
+
             val donor = Donor(
                 id = id,
                 name = name,
@@ -116,7 +135,10 @@ class DonorViewModel(application: Application) : AndroidViewModel(application) {
                 bloodGroup = bloodGroup,
                 lastDonationDateMillis = lastDonationDateMillis,
                 phone = phone,
-                notes = notes
+                notes = notes,
+                uuid = finalUuid,
+                lastModifiedMillis = System.currentTimeMillis(),
+                isDeleted = false
             )
 
             if (id == 0) {
@@ -124,12 +146,103 @@ class DonorViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 repository.updateDonor(donor)
             }
+            // Real-time synchronization whenever changes are saved locally
+            performSync()
         }
     }
 
     fun deleteDonor(donor: Donor) {
         viewModelScope.launch {
             repository.deleteDonor(donor)
+            // Real-time synchronization whenever a donor is deleted
+            performSync()
+        }
+    }
+
+    fun performSync(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            if (_isSyncing.value) return@launch
+            _isSyncing.value = true
+            _syncSuccess.value = null
+            try {
+                // 1. Fetch current pool from Sandbox cloud key-value store
+                val networkDonors = try {
+                    com.example.data.SyncApi.instance.getDonors()
+                } catch (e: retrofit2.HttpException) {
+                    if (e.code() == 404) {
+                        emptyList()
+                    } else {
+                        throw e
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+
+                // 2. Load all local records (active + soft-deleted)
+                val localDonors = repository.getAllDonorsSync()
+
+                // Merge and reconcile lists
+                val mergedList = mutableListOf<Donor>()
+                val localToUpsert = mutableListOf<Donor>()
+
+                val networkMap = networkDonors.associateBy { it.uuid }
+                val localMap = localDonors.associateBy { it.uuid }
+
+                val allUuids = (networkMap.keys + localMap.keys).toSet()
+
+                for (uuid in allUuids) {
+                    val local = localMap[uuid]
+                    val network = networkMap[uuid]
+
+                    if (local != null && network != null) {
+                        // Conflict resolution based on lastModifiedMillis
+                        if (local.lastModifiedMillis >= network.lastModifiedMillis) {
+                            mergedList.add(local)
+                        } else {
+                            val updated = network.copy(id = local.id)
+                            mergedList.add(updated)
+                            localToUpsert.add(updated)
+                        }
+                    } else if (local != null) {
+                        mergedList.add(local)
+                    } else if (network != null) {
+                        if (!network.isDeleted) {
+                            val newLocal = network.copy(id = 0)
+                            mergedList.add(newLocal)
+                            localToUpsert.add(newLocal)
+                        } else {
+                            mergedList.add(network)
+                        }
+                    }
+                }
+
+                // Sync updates to SQLite
+                if (localToUpsert.isNotEmpty()) {
+                    repository.insertDonors(localToUpsert)
+                }
+
+                // Handle deletions across nodes
+                for (local in localDonors) {
+                    val net = networkMap[local.uuid]
+                    if (net != null && net.isDeleted && !local.isDeleted) {
+                        repository.updateDonor(local.copy(isDeleted = true, lastModifiedMillis = net.lastModifiedMillis))
+                    }
+                }
+
+                // 3. Upload combined, fully synchronized array back to sandbox
+                val finalUploadList = repository.getAllDonorsSync()
+                com.example.data.SyncApi.instance.saveDonors(finalUploadList)
+
+                _lastSyncedMillis.value = System.currentTimeMillis()
+                _syncSuccess.value = true
+                _isSyncing.value = false
+                onComplete(true, "App data synchronized with the shared network!")
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _syncSuccess.value = false
+                _isSyncing.value = false
+                onComplete(false, "Sync failed: ${e.localizedMessage}")
+            }
         }
     }
 

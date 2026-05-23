@@ -131,7 +131,22 @@ fun DonorApp(modifier: Modifier = Modifier, viewModel: DonorViewModel) {
     val bgFilter by viewModel.selectedBloodGroupFilter.collectAsStateWithLifecycle()
     val sortBy by viewModel.sortBy.collectAsStateWithLifecycle()
 
+    // Sync States
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val lastSyncedMillis by viewModel.lastSyncedMillis.collectAsStateWithLifecycle()
+
+    // SharedPreferences user profile state
+    val prefs = remember { context.getSharedPreferences("user_profile_prefs", Context.MODE_PRIVATE) }
+    var profileName by remember { mutableStateOf(prefs.getString("profile_name", "Tahmid Hassan") ?: "Tahmid Hassan") }
+    var profileBloodGroup by remember { mutableStateOf(prefs.getString("profile_blood_group", "O+") ?: "O+") }
+    var profileBatch by remember { mutableStateOf(prefs.getString("profile_batch", "K-76") ?: "K-76") }
+    var profilePhone by remember { mutableStateOf(prefs.getString("profile_phone", "+8801712345678") ?: "+8801712345678") }
+    var profileLastDonationMillis by remember { mutableStateOf(prefs.getLong("profile_last_donation_millis", System.currentTimeMillis() - 1000L * 60 * 60 * 24 * 125) ?: (System.currentTimeMillis() - 1000L * 60 * 60 * 24 * 125)) }
+    var profileNeverDonated by remember { mutableStateOf(prefs.getBoolean("profile_never_donated", false)) }
+    var isProfileRegisteredAsDonor by remember { mutableStateOf(prefs.getBoolean("profile_is_registered", true)) }
+
     var showAddEditDialog by remember { mutableStateOf(false) }
+    var showProfileDialog by remember { mutableStateOf(false) }
     var donorToEdit by remember { mutableStateOf<Donor?>(null) }
     var donorToDelete by remember { mutableStateOf<Donor?>(null) }
 
@@ -184,25 +199,24 @@ fun DonorApp(modifier: Modifier = Modifier, viewModel: DonorViewModel) {
                     }
                 },
                 actions = {
-                    Box(
+                    // Profile button on top-right displaying first letter of profile name
+                    Surface(
                         modifier = Modifier
                             .padding(end = 12.dp)
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(AccentSlate),
-                        contentAlignment = Alignment.Center
+                            .clickable { showProfileDialog = true }
+                            .testTag("profile_tab_button"),
+                        color = LavenderAccent
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    width = 2.dp,
-                                    color = TextActive.copy(alpha = 0.7f),
-                                    shape = CircleShape
-                                )
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = if (profileName.isNotBlank()) profileName.first().uppercase() else "T",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = DeepPurpleText
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -241,6 +255,17 @@ fun DonorApp(modifier: Modifier = Modifier, viewModel: DonorViewModel) {
                 .padding(paddingValues)
                 .fillMaxSize()
         ) {
+            // Shared cloud synchronization indicator & action bar
+            SyncStatusStrip(
+                isSyncing = isSyncing,
+                lastSyncedMillis = lastSyncedMillis,
+                onSyncClick = {
+                    viewModel.performSync { success, message ->
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+
             // Stats summary panel
             StatsSection(
                 totalCount = totalDonors,
@@ -352,6 +377,476 @@ fun DonorApp(modifier: Modifier = Modifier, viewModel: DonorViewModel) {
                 }
             }
         )
+    }
+
+    // Profile Dialog Wrapper
+    if (showProfileDialog) {
+        UserProfileDialog(
+            initialName = profileName,
+            initialBloodGroup = profileBloodGroup,
+            initialBatch = profileBatch,
+            initialPhone = profilePhone,
+            initialNeverDonated = profileNeverDonated,
+            initialLastDonationMillis = profileLastDonationMillis,
+            initialRegistered = isProfileRegisteredAsDonor,
+            onDismiss = { showProfileDialog = false },
+            onSave = { name, bg, batch, phone, neverDonated, lastDonation, registered ->
+                profileName = name
+                profileBloodGroup = bg
+                profileBatch = batch
+                profilePhone = phone
+                profileNeverDonated = neverDonated
+                profileLastDonationMillis = lastDonation
+                isProfileRegisteredAsDonor = registered
+
+                // Persist locally in SharedPreferences
+                prefs.edit().apply {
+                    putString("profile_name", name)
+                    putString("profile_blood_group", bg)
+                    putString("profile_batch", batch)
+                    putString("profile_phone", phone)
+                    putBoolean("profile_never_donated", neverDonated)
+                    putLong("profile_last_donation_millis", lastDonation)
+                    putBoolean("profile_is_registered", registered)
+                }.apply()
+
+                // Sync or register details inside the shared directory
+                if (registered) {
+                    var profileUuid = prefs.getString("profile_uuid", null)
+                    if (profileUuid == null) {
+                        profileUuid = java.util.UUID.randomUUID().toString()
+                        prefs.edit().putString("profile_uuid", profileUuid).apply()
+                    }
+
+                    val existingDonor = donors.find { it.uuid == profileUuid }
+                    val idToUse = existingDonor?.id ?: 0
+
+                    viewModel.saveDonor(
+                        id = idToUse,
+                        name = name,
+                        batch = batch,
+                        bloodGroup = bg,
+                        lastDonationDateMillis = if (neverDonated) 0L else lastDonation,
+                        phone = phone,
+                        notes = "Self-Registered App Member",
+                        existingUuid = profileUuid
+                    )
+                } else {
+                    val profileUuid = prefs.getString("profile_uuid", null)
+                    if (profileUuid != null) {
+                        val existingDonor = donors.find { it.uuid == profileUuid }
+                        if (existingDonor != null) {
+                            viewModel.deleteDonor(existingDonor)
+                        }
+                    }
+                }
+
+                showProfileDialog = false
+                Toast.makeText(context, "User profile updated successfully!", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+}
+
+@Composable
+fun SyncStatusStrip(
+    isSyncing: Boolean,
+    lastSyncedMillis: Long,
+    onSyncClick: () -> Unit
+) {
+    val timeStr = if (lastSyncedMillis == 0L) {
+        "Never Synced"
+    } else {
+        val seconds = (System.currentTimeMillis() - lastSyncedMillis) / 1000
+        when {
+            seconds < 60 -> "Synced just now"
+            seconds < 3600 -> "Synced ${seconds / 60}m ago"
+            else -> "Synced ${seconds / 3600}h ago"
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DarkSurfaceSecondary)
+            .clickable(enabled = !isSyncing, onClick = onSyncClick)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (isSyncing) LavenderAccent else EligibleGreen)
+            )
+            Text(
+                text = "Shared Cloud Registry",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                color = TextActive
+            )
+            Text(
+                text = "($timeStr)",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                color = TextMuted
+            )
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (isSyncing) {
+                Text(
+                    text = "Syncing...",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = LavenderAccent
+                )
+            } else {
+                Text(
+                    text = "Sync Now",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                    color = LavenderAccent
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun UserProfileDialog(
+    initialName: String,
+    initialBloodGroup: String,
+    initialBatch: String,
+    initialPhone: String,
+    initialNeverDonated: Boolean,
+    initialLastDonationMillis: Long,
+    initialRegistered: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (name: String, bg: String, batch: String, phone: String, neverDonated: Boolean, lastDonation: Long, registered: Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    var name by remember { mutableStateOf(initialName) }
+    var bloodGroup by remember { mutableStateOf(initialBloodGroup) }
+    var batch by remember { mutableStateOf(initialBatch) }
+    var phone by remember { mutableStateOf(initialPhone) }
+    var neverDonated by remember { mutableStateOf(initialNeverDonated) }
+    var registered by remember { mutableStateOf(initialRegistered) }
+    var lastDonationMillis by remember { mutableStateOf(if (initialLastDonationMillis == 0L) System.currentTimeMillis() else initialLastDonationMillis) }
+
+    var nameError by remember { mutableStateOf(false) }
+    var batchError by remember { mutableStateOf(false) }
+
+    val datePickerCallback = remember {
+        DatePickerDialog.OnDateSetListener { _, year, month, dayOfMonth ->
+            val calendar = Calendar.getInstance().apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            lastDonationMillis = calendar.timeInMillis
+            neverDonated = false
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("user_profile_dialog"),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+            border = BorderStroke(1.dp, TextActive.copy(alpha = 0.08f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(LavenderAccent),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (name.isNotBlank()) name.first().uppercase() else "T",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp,
+                            color = DeepPurpleText
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "My Profile Card",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LightPinkAccent
+                        )
+                        Text(
+                            text = "Sandhani Blood Registry Info",
+                            fontSize = 11.sp,
+                            color = TextMuted
+                        )
+                    }
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it; nameError = false },
+                            label = { Text("My Full Name") },
+                            isError = nameError,
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = LavenderAccent,
+                                unfocusedBorderColor = AccentSlate,
+                                focusedLabelColor = LavenderAccent,
+                                unfocusedLabelColor = TextMuted,
+                                focusedTextColor = TextActive,
+                                unfocusedTextColor = TextActive,
+                                focusedContainerColor = DarkBg,
+                                unfocusedContainerColor = DarkBg
+                            )
+                        )
+                    }
+
+                    item {
+                        OutlinedTextField(
+                            value = batch,
+                            onValueChange = { batch = it; batchError = false },
+                            label = { Text("My Batch") },
+                            isError = batchError,
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = LavenderAccent,
+                                unfocusedBorderColor = AccentSlate,
+                                focusedLabelColor = LavenderAccent,
+                                unfocusedLabelColor = TextMuted,
+                                focusedTextColor = TextActive,
+                                unfocusedTextColor = TextActive,
+                                focusedContainerColor = DarkBg,
+                                unfocusedContainerColor = DarkBg
+                            )
+                        )
+                    }
+
+                    item {
+                        OutlinedTextField(
+                            value = phone,
+                            onValueChange = { phone = it },
+                            label = { Text("My Phone Number") },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = LavenderAccent,
+                                unfocusedBorderColor = AccentSlate,
+                                focusedLabelColor = LavenderAccent,
+                                unfocusedLabelColor = TextMuted,
+                                focusedTextColor = TextActive,
+                                unfocusedTextColor = TextActive,
+                                focusedContainerColor = DarkBg,
+                                unfocusedContainerColor = DarkBg
+                            )
+                        )
+                    }
+
+                    item {
+                        Text(
+                            text = "My Blood Group",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextMuted
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        val bgList = listOf("A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-")
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            bgList.forEach { bg ->
+                                val isSelected = bloodGroup == bg
+                                Surface(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { bloodGroup = bg },
+                                    color = if (isSelected) LightPinkAccent else DarkBg,
+                                    border = BorderStroke(1.dp, if (isSelected) Color.Transparent else AccentSlate),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = bg,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) DeepPinkText else TextActive
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { neverDonated = !neverDonated }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Checkbox(
+                                checked = neverDonated,
+                                onCheckedChange = { neverDonated = it },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = LavenderAccent,
+                                    uncheckedColor = TextMuted,
+                                    checkmarkColor = DeepPurpleText
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                "I have never donated blood",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextActive
+                            )
+                        }
+                    }
+
+                    item {
+                        if (!neverDonated) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "My Last Donation Date",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextMuted
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            OutlinedButton(
+                                onClick = {
+                                    val calendar = Calendar.getInstance().apply {
+                                        timeInMillis = lastDonationMillis
+                                    }
+                                    DatePickerDialog(
+                                        context,
+                                        datePickerCallback,
+                                        calendar.get(Calendar.YEAR),
+                                        calendar.get(Calendar.MONTH),
+                                        calendar.get(Calendar.DAY_OF_MONTH)
+                                    ).show()
+                                },
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, AccentSlate),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = LavenderAccent)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.DateRange, contentDescription = "Select Date")
+                                    Text(text = DonorViewModel.formatDate(lastDonationMillis), fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(DarkSurfaceSecondary)
+                                .clickable { registered = !registered }
+                                .padding(12.dp)
+                        ) {
+                            Checkbox(
+                                checked = registered,
+                                onCheckedChange = { registered = it },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = LightPinkAccent,
+                                    uncheckedColor = TextMuted,
+                                    checkmarkColor = DeepPinkText
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Share my profile as active donor",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = LightPinkAccent
+                                )
+                                Text(
+                                    "This lets all other members search you on the network list.",
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = TextMuted)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (name.isBlank()) nameError = true
+                            if (batch.isBlank()) batchError = true
+
+                            if (!nameError && !batchError) {
+                                onSave(name.trim(), bloodGroup, batch.trim(), phone.trim(), neverDonated, lastDonationMillis, registered)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = LavenderAccent, contentColor = DeepPurpleText),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.testTag("save_profile_button")
+                    ) {
+                        Text("Save Profile", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 

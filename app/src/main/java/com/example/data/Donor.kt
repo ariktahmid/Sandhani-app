@@ -2,6 +2,7 @@ package com.example.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 @Entity(tableName = "donors")
 data class Donor(
@@ -11,5 +12,8 @@ data class Donor(
     val bloodGroup: String, // A+, A-, B+, B-, O+, O-, AB+, AB-
     val lastDonationDateMillis: Long, // Epoch millis
     val phone: String = "",
-    val notes: String = ""
+    val notes: String = "",
+    val uuid: String = UUID.randomUUID().toString(),
+    val lastModifiedMillis: Long = System.currentTimeMillis(),
+    val isDeleted: Boolean = false
 )
